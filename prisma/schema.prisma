@@ -75,8 +75,8 @@ model User {
   sessions           SessionAuth[]
   notifications      Notification[]
   pushNotifications  PushNotification[]
-  validatedTickets   Ticket[]           @relation("UserValidatedTickets")
-  transferredTickets Ticket[]           @relation("TransferredTickets")
+  validatedTickets   Ticket[]  @relation("UserValidatedTickets")
+  transferredTickets Ticket[]  @relation("TransferredTickets")
   orders             Order[]
   tickets            Ticket[]
   seats              Seat[]
@@ -158,27 +158,27 @@ model Event {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  category         Category         @relation(fields: [categoryId], references: [id])
-  organizer        User             @relation(fields: [organizerId], references: [id])
+  category      Category         @relation(fields: [categoryId], references: [id])
+  organizer     User             @relation(fields: [organizerId], references: [id])
   ticketCategories TicketCategory[]
-  sessions         Session[]
-  orders           Order[]
-  seats            Seat[]
-  tickets          Ticket[]
-  artists          Artist[]
-  discountCodes    DiscountCode[]
-  commissions      Commission[]
-  accessLogs       EventAccessLog[]
+  sessions        Session[]
+  orders          Order[]
+  seats           Seat[]
+  tickets         Ticket[]
+  artists         Artist[]
+  discountCodes   DiscountCode[]
+  commissions     Commission[]
+  accessLogs      EventAccessLog[]
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  date      DateTime
-  venueName String
-  city      String
-  eventId   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  date       DateTime
+  venueName  String
+  city       String
+  eventId    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   event        Event          @relation(fields: [eventId], references: [id])
   seats        Seat[]
@@ -282,7 +282,7 @@ model Ticket {
   userId             String
   eventId            String
   validatorId        String?
-  transferedToUserId String?
+  transferedToUserId String?   // nova coluna
   createdAt          DateTime  @default(now())
 
   session          Session         @relation(fields: [sessionId], references: [id])

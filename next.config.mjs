@@ -1,22 +1,22 @@
 // next.config.mjs
-import { serverEnv } from "./src/env/schema";
-
+// Simplified configuration without serverEnv or secret dependencies
+/** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
   swcMinify: true,
   i18n: {
-    locales: ["en"],
-    defaultLocale: "en",
+    locales: ['en'],
+    defaultLocale: 'en',
   },
   images: {
     remotePatterns: [
-      { protocol: "https", hostname: "lh3.googleusercontent.com" },
-      { protocol: "https", hostname: "platform-lookaside.fbsbx.com" },
-      { protocol: "https", hostname: "definicion.de" },
-      { protocol: "https", hostname: "demo.themesberg.com" },
-      { protocol: "https", hostname: "entradamaster.com" },
-      { protocol: "https", hostname: "source.unsplash.com" },
-      { protocol: "https", hostname: "mdueqvcazdypzlepvxoc.supabase.co" },
+      { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
+      { protocol: 'https', hostname: 'platform-lookaside.fbsbx.com' },
+      { protocol: 'https', hostname: 'definicion.de' },
+      { protocol: 'https', hostname: 'demo.themesberg.com' },
+      { protocol: 'https', hostname: 'entradamaster.com' },
+      { protocol: 'https', hostname: 'source.unsplash.com' },
+      { protocol: 'https', hostname: 'mdueqvcazdypzlepvxoc.supabase.co' },
     ],
   },
   typescript: {
@@ -26,10 +26,12 @@ const config = {
     ignoreDuringBuilds: true,
   },
 
-  // Expondo só as variáveis públicas necessárias ao client
+  // Expose only public env variables to the client
   env: {
-    NEXT_PUBLIC_SUPABASE_URL: serverEnv.SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: serverEnv.SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE,
   },
 };
 

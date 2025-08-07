@@ -8,7 +8,16 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useSession } from "next-auth/react";
 import { EventStatus } from "@prisma/client";
 import { trpc } from "@/utils/trpc";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
+import { env } from "@/env";
+
+// Supabase client usando env validado sem non-null assertions
+const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY in env");
+}
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const FIXED_TICKET_TYPES = ["Platea A", "Platea B", "Platea C", "Pullman"] as const;
 type FixedType = (typeof FIXED_TICKET_TYPES)[number];
@@ -60,17 +69,16 @@ export default function CreateEventPage() {
   const [categoryId, setCategoryId] = useState("");
 
   const { data: categories = [] } = trpc.category.list.useQuery();
-
   const mutation = trpc.event.create.useMutation({
-    onSuccess: () => {
-      router.push("/dashboard");
-    },
+    onSuccess: () => router.push("/dashboard"),
   });
 
   const { register, getValues } = useForm<
     Omit<EventFormInput, "sessions" | "ticketCategories" | "image">
   >({
-    resolver: zodResolver(eventSchema.omit({ sessions: true, ticketCategories: true, image: true })),
+    resolver: zodResolver(
+      eventSchema.omit({ sessions: true, ticketCategories: true, image: true })
+    ),
     mode: "onTouched",
   });
 
@@ -82,7 +90,7 @@ export default function CreateEventPage() {
     const fileName = `${Date.now()}-${imageFile.name}`;
     const { error } = await supabase.storage.from("entrad-maestro").upload(fileName, imageFile);
     if (error) throw error;
-    return `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/entrad-maestro/${fileName}`;
+    return `${supabaseUrl}/storage/v1/object/public/entrad-maestro/${fileName}`;
   };
 
   const handleSubmit = async () => {
@@ -91,8 +99,7 @@ export default function CreateEventPage() {
     if (!tickets.length) return alert("Adicione pelo menos um tipo de ingresso");
 
     const raw = getValues();
-    let image: string | undefined = undefined;
-
+    let image: string | undefined;
     try {
       image = await uploadImage();
     } catch {
@@ -131,15 +138,16 @@ export default function CreateEventPage() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
       <h1 className="mb-8 text-3xl font-bold text-gray-800">Crear evento</h1>
-
       <form onSubmit={(e) => e.preventDefault()} className="space-y-10">
+        {/* Informação básica */}
         <div className="space-y-4 rounded-lg bg-white p-6 shadow-md">
           <h2 className="text-xl font-semibold text-gray-700">Información básica</h2>
           <input {...register("name")} placeholder="Nombre del evento" className={inputClass} />
           <input {...register("description")} placeholder="Descripción" className={inputClass} />
-          <input {...register("slug")} placeholder="Slug (URL amigable)" className={inputClass} />
+          <input {...register("slug")} placeholder="Slug (URL amigável)" className={inputClass} />
         </div>
 
+        {/* Informação do evento */}
         <div className="space-y-4 rounded-lg bg-white p-6 shadow-md">
           <h2 className="text-xl font-semibold text-gray-700">Información del evento</h2>
           <div className="flex gap-2">
@@ -162,7 +170,6 @@ export default function CreateEventPage() {
               Agregar
             </button>
           </div>
-
           {artists.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {artists.map((name, i) => (
@@ -172,36 +179,33 @@ export default function CreateEventPage() {
               ))}
             </div>
           )}
-
-          <input {...register("venueName")} placeholder="Lugar del evento" className={inputClass} />
+          <input {...register("venueName")} placeholder="Lugar do evento" className={inputClass} />
           <input
             {...register("capacity", { valueAsNumber: true })}
             type="number"
-            placeholder="Capacidad (1 a 150)"
+            placeholder="Capacidade (1 a 150)"
             className={inputClass}
           />
         </div>
 
+        {/* Localização */}
         <div className="space-y-4 rounded-lg bg-white p-6 shadow-md">
-          <h2 className="text-xl font-semibold text-gray-700">Ubicación</h2>
+          <h2 className="text-xl font-semibold text-gray-700">Localização</h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <input {...register("street")} placeholder="Calle" className={inputClass} />
+            <input {...register("street")} placeholder="Rua" className={inputClass} />
             <input {...register("number")} placeholder="Número" className={inputClass} />
-            <input {...register("neighborhood")} placeholder="Barrio" className={inputClass} />
-            <input {...register("city")} placeholder="Ciudad" className={inputClass} />
+            <input {...register("neighborhood")} placeholder="Bairro" className={inputClass} />
+            <input {...register("city")} placeholder="Cidade" className={inputClass} />
             <input {...register("state")} placeholder="Estado" className={inputClass} />
-            <input {...register("zipCode")} placeholder="Código Postal" className={inputClass} />
+            <input {...register("zipCode")} placeholder="CEP" className={inputClass} />
           </div>
         </div>
 
+        {/* Categoria */}
         <div className="space-y-4 rounded-lg bg-white p-6 shadow-md">
-          <h2 className="text-xl font-semibold text-gray-700">Categoría</h2>
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className={inputClass}
-          >
-            <option value="">Seleccione una categoría</option>
+          <h2 className="text-xl font-semibold text-gray-700">Categoria</h2>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputClass}>
+            <option value="">Selecione uma categoria</option>
             {categories.map((cat) => (
               <option key={cat.id} value={cat.id}>
                 {cat.title}
@@ -210,8 +214,9 @@ export default function CreateEventPage() {
           </select>
         </div>
 
+        {/* Imagem */}
         <div className="rounded-lg bg-white p-6 shadow-md">
-          <h2 className="mb-4 text-xl font-semibold text-gray-700">Imagen del evento</h2>
+          <h2 className="mb-4 text-xl font-semibold text-gray-700">Imagem do evento</h2>
           <input
             type="file"
             accept="image/*"
@@ -226,7 +231,7 @@ export default function CreateEventPage() {
           />
           {imagePreview && (
             <div className="mt-4">
-              <p className="mb-2 text-sm text-gray-500">Vista previa:</p>
+              <p className="mb-2 text-sm text-gray-500">Prévia da imagem:</p>
               <div className="relative h-64 w-full overflow-hidden rounded">
                 <Image src={imagePreview} alt="Preview" fill className="object-cover" />
               </div>
@@ -234,44 +239,41 @@ export default function CreateEventPage() {
           )}
         </div>
 
+        {/* Sessões */}
         <div className="rounded-lg bg-white p-6 shadow-md">
-          <h2 className="mb-4 text-xl font-semibold text-gray-700">Sesiones</h2>
+          <h2 className="mb-4 text-xl font-semibold text-gray-700">Sessões</h2>
           {sessions.map((s, i) => (
             <div key={i} className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <input
                 type="date"
                 value={s.date}
-                onChange={(e) => {
-                  setSessions((prev) => {
-                    const updated = [...prev];
-                    if (updated[i]) updated[i].date = e.target.value;
-                    return updated;
-                  });
-                }}
+                onChange={(e) =>
+                  setSessions((prev) =>
+                    prev.map((sess, idx) => (idx === i ? { ...sess, date: e.target.value } : sess))
+                  )
+                }
                 className={inputClass}
               />
               <input
-                placeholder="Ciudad"
+                placeholder="Cidade"
                 value={s.city}
-                onChange={(e) => {
-                  setSessions((prev) => {
-                    const updated = [...prev];
-                    if (updated[i]) updated[i].city = e.target.value;
-                    return updated;
-                  });
-                }}
+                onChange={(e) =>
+                  setSessions((prev) =>
+                    prev.map((sess, idx) => (idx === i ? { ...sess, city: e.target.value } : sess))
+                  )
+                }
                 className={inputClass}
               />
               <input
                 placeholder="Local"
                 value={s.venueName}
-                onChange={(e) => {
-                  setSessions((prev) => {
-                    const updated = [...prev];
-                    if (updated[i]) updated[i].venueName = e.target.value;
-                    return updated;
-                  });
-                }}
+                onChange={(e) =>
+                  setSessions((prev) =>
+                    prev.map((sess, idx) =>
+                      idx === i ? { ...sess, venueName: e.target.value } : sess
+                    )
+                  )
+                }
                 className={inputClass}
               />
             </div>
@@ -283,83 +285,73 @@ export default function CreateEventPage() {
             }
             className="text-sm text-blue-600 underline"
           >
-            + Agregar sesión
+            + Adicionar sessão
           </button>
         </div>
 
+        {/* Ingressos */}
         <div className="rounded-lg bg-white p-6 shadow-md">
           <h2 className="mb-4 text-xl font-semibold text-gray-700">Ingressos</h2>
           {tickets.map((ticket, i) => (
             <div key={i} className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
               <select
                 value={ticket.title}
-                onChange={(e) => {
-                  setTickets((prev) => {
-                    const updated = [...prev];
-                    if (updated[i]) updated[i].title = e.target.value as FixedType;
-                    return updated;
-                  });
-                }}
+                onChange={(e) =>
+                  setTickets((prev) =>
+                    prev.map((t, idx) => (idx === i ? { ...t, title: e.target.value as FixedType } : t))
+                  )
+                }
                 className={inputClass}
               >
                 {FIXED_TICKET_TYPES.map((type) => (
                   <option key={type} value={type}>
                     {type}
-                  </option>
+                  </option>  
                 ))}
               </select>
 
               <input
                 type="number"
-                placeholder="Cantidad"
-                value={ticket.quantity || ""}
-                onChange={(e) => {
-                  setTickets((prev) => {
-                    const updated = [...prev];
-                    if (updated[i]) updated[i].quantity = Math.max(0, Number(e.target.value));
-                    return updated;
-                  });
-                }}
+                placeholder="Quantidade"
+                value={ticket.quantity}
+                onChange={(e) =>
+                  setTickets((prev) =>
+                    prev.map((t, idx) => (idx === i ? { ...t, quantity: Math.max(0, Number(e.target.value)) } : t))
+                  )
+                }
                 className={inputClass}
               />
 
               <input
                 type="number"
-                value={ticket.price === 0 ? "" : ticket.price}
-                onChange={(e) => {
-                  setTickets((prev) => {
-                    const updated = [...prev];
-                    if (updated[i]) updated[i].price = e.target.value === "" ? 0 : Number(e.target.value);
-                    return updated;
-                  });
-                }}
-                placeholder="Precio"
+                placeholder="Preço"
+                value={ticket.price}
+                onChange={(e) =>
+                  setTickets((prev) =>
+                    prev.map((t, idx) => (idx === i ? { ...t, price: Number(e.target.value) || 0 } : t))
+                  )
+                }
                 className={inputClass}
               />
             </div>
           ))}
-
           <button
             type="button"
-            onClick={() =>
-              setTickets((prev) => [
-                ...prev,
-                { title: "Platea A", price: "" as unknown as number, quantity: 1 },
-              ])
-            }
+            onClick={() => setTickets((prev) => [...prev, { title: "Platea A", price: 1, quantity: 1 }])}
             className="text-sm text-blue-600 underline"
           >
-            + Agregar Entrada
+            + Adicionar ingresso
           </button>
         </div>
 
+        {/* Botão de criar */}
         <div className="flex justify-end">
           <button
             type="button"
             onClick={handleSubmit}
             className="hover:bg-primary-200 rounded bg-primary-100 px-6 py-3 font-semibold text-white transition"
           >
-            Crear Evento
+            Criar Evento
           </button>
         </div>
       </form>

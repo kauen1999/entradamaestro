@@ -1,4 +1,5 @@
 // src/modules/pagotic/pagotic.service.ts
+// src/modules/pagotic/pagotic.service.ts
 import { getPagoticToken } from "./pagotic.auth";
 import { PAGOTIC_ENDPOINTS } from "./pagotic.endpoints";
 import { toPagoticError } from "./pagotic.errors";
@@ -6,7 +7,7 @@ import {
   buildFiltersQuery,
   buildSortsQuery,
   withTimeout,
-  // (só usamos para checagens/formatos)
+  sanitizeForLog,
 } from "./pagotic.utils";
 import type {
   CreatePagoticPayment,
@@ -20,6 +21,7 @@ import type {
 
 type EnvLike = Partial<Record<string, string | undefined>>;
 
+/** URL http(s) pública e não-localhost */
 function isPublicHttpUrl(value?: string): value is string {
   if (!value) return false;
   try {
@@ -35,8 +37,51 @@ function isPublicHttpUrl(value?: string): value is string {
   }
 }
 
+/** Normaliza URL de input; vazia/localhost → undefined */
 function normalizeInputUrl(v?: string): string | undefined {
   return isPublicHttpUrl(v) ? v : undefined;
+}
+
+/** Regras mínimas para transação online (cartão) */
+function assertOnlinePayment(body: CreatePagoticPayment): void {
+  // type precisa ser "online" (se veio outro, forçamos em createPayment)
+  if (body.type !== "online") {
+    throw new Error('Para cartão, "type" deve ser "online".');
+  }
+
+  // payer obrigatório
+  const p = body.payer;
+  if (!p?.email || !p.name) {
+    throw new Error('Campos obrigatórios em "payer": name e email.');
+  }
+
+  // payment_methods obrigatório
+  if (!Array.isArray(body.payment_methods) || body.payment_methods.length === 0) {
+    throw new Error('Envie pelo menos um item em "payment_methods" para pagamento online.');
+  }
+
+  // checa cada método
+  for (const pm of body.payment_methods) {
+    if (typeof pm.media_payment_id !== "number") {
+      throw new Error('payment_methods[].media_payment_id é obrigatório (número).');
+    }
+    if (!pm.number || typeof pm.number !== "string") {
+      throw new Error('payment_methods[].number é obrigatório (PAN do cartão).');
+    }
+    if (
+      typeof pm.expiration_year !== "number" ||
+      typeof pm.expiration_month !== "number"
+    ) {
+      throw new Error("payment_methods[].expiration_year e expiration_month são obrigatórios.");
+    }
+    if (!pm.security_code || typeof pm.security_code !== "string") {
+      throw new Error("payment_methods[].security_code (CVV) é obrigatório.");
+    }
+    const holder = pm.holder;
+    if (!holder?.name) {
+      throw new Error('payment_methods[].holder.name é obrigatório.');
+    }
+  }
 }
 
 export class PagoticService {
@@ -73,10 +118,7 @@ export class PagoticService {
   private async authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
     const token = await getPagoticToken(this.authEnv());
     const signal = withTimeout(this.timeoutMs());
-    const url = `${this.baseUrl()}${path}`;
-
-    console.log("[PagoTIC][HTTP] →", init.method ?? "GET", url);
-    const rsp = await fetch(url, {
+    return fetch(`${this.baseUrl()}${path}`, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -85,13 +127,12 @@ export class PagoticService {
       },
       signal,
     });
-    console.log("[PagoTIC][HTTP] ←", rsp.status, url);
-    return rsp;
   }
 
   // --- Core operations ---
 
   async createPayment(input: CreatePagoticPayment): Promise<PagoticPaymentResponse> {
+    // Resolve URLs com fallback ao .env
     const return_url =
       normalizeInputUrl(input.return_url) ?? this.envUrl("PAGOTIC_RETURN_URL");
     const back_url =
@@ -100,20 +141,22 @@ export class PagoticService {
       normalizeInputUrl(input.notification_url) ??
       this.envUrl("PAGOTIC_NOTIFICATION_URL");
 
+    // Exigido pelo provedor: sempre enviar notification_url público
     if (!notification_url) {
-      console.error("[PagoTIC][createPayment] FAIL: notification_url ausente/Inválida", {
-        env_notification_url: this.env.PAGOTIC_NOTIFICATION_URL,
-        input_notification_url: input.notification_url,
-      });
       throw new Error(
         "notification_url ausente. Configure PAGOTIC_NOTIFICATION_URL no ambiente ou envie uma URL pública válida."
       );
     }
 
+    // Força "online" caso o chamador não tenha definido (fluxo de cartão)
+    const typeFinal: CreatePagoticPayment["type"] =
+      input.type && ["debit", "online", "transfer", "debin", "coupon"].includes(input.type)
+        ? input.type
+        : "online";
+
     const body: CreatePagoticPayment = {
       ...input,
-      // se você estiver usando cartão online, garanta que o front mande type: "online"
-      // não forçamos aqui para não quebrar cupons/transfer/etc.
+      type: typeFinal,
       collector_id: input.collector_id ?? this.env.PAGOTIC_COLLECTOR_ID,
       currency_id: input.currency_id ?? this.currency(),
       return_url,
@@ -121,17 +164,24 @@ export class PagoticService {
       notification_url,
     };
 
-    // Log de preview (sem dados sensíveis)
-    console.log("[PagoTIC][createPayment] request.preview", {
+    // Validações mínimas para "online"
+    if (body.type === "online") {
+      assertOnlinePayment(body);
+    }
+
+    // Log de preview (sanitizado)
+    const preview = sanitizeForLog({
       external_transaction_id: body.external_transaction_id,
       type: body.type,
-      detailsCount: Array.isArray(body.details) ? body.details.length : 0,
-      hasPayer: Boolean(body.payer),
-      pmCount: Array.isArray(body.payment_methods) ? body.payment_methods.length : 0,
       return_url: body.return_url,
       back_url: body.back_url,
       notification_url: body.notification_url,
+      payer: body.payer,
+      detailsCount: Array.isArray(body.details) ? body.details.length : 0,
+      pmCount: Array.isArray(body.payment_methods) ? body.payment_methods.length : 0,
     });
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][createPayment] body.preview", preview);
 
     const rsp = await this.authedFetch(PAGOTIC_ENDPOINTS.pagos, {
       method: "POST",
@@ -139,17 +189,16 @@ export class PagoticService {
     });
 
     const text = await rsp.text();
-    console.log("[PagoTIC][createPayment] raw response:", rsp.status, text.slice(0, 800));
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][createPayment] raw response:", rsp.status, text);
 
     if (!rsp.ok) {
-      // Devolve erro detalhado
+      // Tenta enriquecer o erro antes de lançar
       try {
-        const j = JSON.parse(text);
-        console.error("[PagoTIC][createPayment] ERROR JSON:", j);
-      } catch {
-        console.error("[PagoTIC][createPayment] ERROR TXT:", text);
+        throw await toPagoticError(new Response(text, { status: rsp.status }));
+      } catch (e) {
+        throw e;
       }
-      throw await toPagoticError(rsp);
     }
 
     try {
@@ -162,8 +211,10 @@ export class PagoticService {
   async getPaymentById(id: string): Promise<PagoticPaymentResponse> {
     const rsp = await this.authedFetch(PAGOTIC_ENDPOINTS.pagosById(id));
     const text = await rsp.text();
-    console.log("[PagoTIC][getPaymentById] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][getPaymentById] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as PagoticPaymentResponse;
   }
 
@@ -177,11 +228,12 @@ export class PagoticService {
     const q = new URLSearchParams({ page: String(page), limit: String(limit) });
     buildFiltersQuery(filters).forEach((v, k) => q.append(k, v));
     buildSortsQuery(sorts).forEach((v, k) => q.append(k, v));
-    const url = `${PAGOTIC_ENDPOINTS.pagos}?${q.toString()}`;
-    const rsp = await this.authedFetch(url);
+    const rsp = await this.authedFetch(`${PAGOTIC_ENDPOINTS.pagos}?${q.toString()}`);
     const text = await rsp.text();
-    console.log("[PagoTIC][listPayments] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][listPayments] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as PagoticListResponse<PagoticPaymentResponse>;
   }
 
@@ -191,8 +243,10 @@ export class PagoticService {
       body: JSON.stringify(status_detail ? { status_detail } : {}),
     });
     const text = await rsp.text();
-    console.log("[PagoTIC][cancelPayment] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][cancelPayment] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as PagoticPaymentResponse;
   }
 
@@ -205,8 +259,10 @@ export class PagoticService {
       body: JSON.stringify(body),
     });
     const text = await rsp.text();
-    console.log("[PagoTIC][refundPayment] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][refundPayment] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as Record<string, unknown>;
   }
 
@@ -216,8 +272,10 @@ export class PagoticService {
       body: JSON.stringify(req.paymentIds),
     });
     const text = await rsp.text();
-    console.log("[PagoTIC][groupPayments] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][groupPayments] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as Record<string, unknown>;
   }
 
@@ -227,8 +285,10 @@ export class PagoticService {
       body: JSON.stringify({ group_id: groupId }),
     });
     const text = await rsp.text();
-    console.log("[PagoTIC][ungroupPayments] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][ungroupPayments] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as Record<string, unknown>;
   }
 
@@ -238,8 +298,10 @@ export class PagoticService {
       body: JSON.stringify(req),
     });
     const text = await rsp.text();
-    console.log("[PagoTIC][distributePayment] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][distributePayment] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as Record<string, unknown>;
   }
 
@@ -249,8 +311,11 @@ export class PagoticService {
       { method: "POST" },
     );
     const text = await rsp.text();
-    console.log("[PagoTIC][resendNotification] raw response:", rsp.status, text.slice(0, 800));
-    if (!rsp.ok) throw await toPagoticError(rsp);
+    // eslint-disable-next-line no-console
+    console.log("[PagoTIC][resendNotification] raw response:", rsp.status, text);
+
+    if (!rsp.ok) throw await toPagoticError(new Response(text, { status: rsp.status }));
     return JSON.parse(text) as Record<string, unknown>;
   }
 }
+
